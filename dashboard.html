@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登革熱疫情儀表板</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e13;
+    --bg-2: #0f1419;
+    --surface: #1a2028;
+    --surface-2: #232b35;
+    --border: #2d3842;
+    --text: #e8ecef;
+    --text-dim: #9aa5b1;
+    --text-faint: #5c6874;
+    --accent: #d4a574;
+    --accent-bright: #f2c78a;
+    --danger: #e85d5d;
+    --warn: #e8b84d;
+    --ok: #6ab87a;
+    --info: #5d9ce8;
+    --purple: #8b6bb5;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  header {
+    background: linear-gradient(180deg, #1a2028 0%, #0f1419 100%);
+    border-bottom: 2px solid var(--accent-dim);
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .header-badge {
+    width: 40px; height: 40px;
+    background: var(--accent);
+    color: var(--bg);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 18px;
+    letter-spacing: -1px;
+  }
+  .header-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 2px;
+  }
+  .header-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    margin-top: 2px;
+  }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .update-time {
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 1px;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .btn-refresh {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .btn-refresh:hover { background: var(--accent); color: var(--bg); }
+
+  main { padding: 20px 24px 80px; max-width: 1600px; margin: 0 auto; }
+
+  /* Loading / Error states */
+  .loader {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text-dim);
+  }
+  .loader-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: var(--accent);
+    border-radius: 50%;
+    margin: 0 4px;
+    animation: bounce 1.4s infinite ease-in-out both;
+  }
+  .loader-dot:nth-child(1) { animation-delay: -0.32s; }
+  .loader-dot:nth-child(2) { animation-delay: -0.16s; }
+  @keyframes bounce {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+  }
+  .error-box {
+    background: rgba(232, 93, 93, 0.1);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 16px;
+    border-radius: 6px;
+    text-align: center;
+    margin: 20px 0;
+  }
+
+  /* KPI Cards */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .kpi {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent);
+  }
+  .kpi.danger::before { background: var(--danger); }
+  .kpi.warn::before { background: var(--warn); }
+  .kpi.ok::before { background: var(--ok); }
+  .kpi.info::before { background: var(--info); }
+
+  .kpi-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  .kpi-value {
+    font-size: 32px;
+    font-weight: 700;
+    font-family: ui-monospace, "SF Mono", monospace;
+    line-height: 1;
+  }
+  .kpi-delta {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 6px;
+  }
+  .kpi.danger .kpi-value { color: var(--danger); }
+  .kpi.warn .kpi-value { color: var(--warn); }
+  .kpi.ok .kpi-value { color: var(--ok); }
+  .kpi.info .kpi-value { color: var(--info); }
+
+  /* Chart Grid */
+  .chart-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 2px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  .card-subtitle {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-bottom: 14px;
+  }
+  .card-chart { position: relative; height: 260px; }
+  .card-chart.tall { height: 320px; }
+  .card-chart.short { height: 200px; }
+
+  .span-3 { grid-column: span 3; }
+  .span-4 { grid-column: span 4; }
+  .span-6 { grid-column: span 6; }
+  .span-8 { grid-column: span 8; }
+  .span-12 { grid-column: span 12; }
+  @media (max-width: 1100px) {
+    .span-3, .span-4 { grid-column: span 6; }
+    .span-6, .span-8 { grid-column: span 12; }
+  }
+  @media (max-width: 640px) {
+    .span-3, .span-4, .span-6, .span-8 { grid-column: span 12; }
+    .kpi-value { font-size: 26px; }
+  }
+
+  /* Lists */
+  .rank-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .rank-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .rank-num {
+    width: 22px; height: 22px;
+    background: var(--accent);
+    color: var(--bg);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .rank-num.cold { background: var(--surface-2); color: var(--text-dim); }
+  .rank-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rank-count {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+
+  /* Network */
+  #network {
+    height: 500px;
+    background: var(--bg-2);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .network-legend {
+    display: flex;
+    gap: 14px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+  }
+
+  /* Empty state */
+  .empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-faint);
+    font-size: 12px;
+  }
+
+  /* Stats strip */
+  .strip {
+    display: flex;
+    justify-content: space-around;
+    text-align: center;
+    padding: 12px 0;
+  }
+  .strip-item { flex: 1; }
+  .strip-value {
+    font-size: 20px;
+    font-weight: 700;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .strip-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    margin-top: 2px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="header-badge">DEN</div>
+    <div>
+      <div class="header-title">登革熱疫情儀表板</div>
+      <div class="header-sub">DENGUE INTELLIGENCE · COMMAND CENTER</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="update-time" id="updateTime">—</div>
+    <button class="btn-refresh" onclick="loadData()">↻ 重新整理</button>
+  </div>
+</header>
+
+<main id="main">
+  <div class="loader" id="loader">
+    <div>
+      <span class="loader-dot"></span>
+      <span class="loader-dot"></span>
+      <span class="loader-dot"></span>
+    </div>
+    <div style="margin-top: 16px; font-size: 12px; letter-spacing: 2px;">ACCESSING FIELD DATA...</div>
+  </div>
+</main>
+
+<script>
+// ============ 設定 ============
+const ENDPOINT = 'https://script.google.com/macros/s/AKfycby56Su6Pa88TVkZRTx2ZEqn4gztvaCUwEBybhjYXPYdq5LyswfAEvL_REHEzVoWLgrY/exec';
+
+// ============ 共用圖表樣式 ============
+Chart.defaults.color = '#9aa5b1';
+Chart.defaults.borderColor = '#2d3842';
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "PingFang TC", sans-serif';
+
+const ACCENT = '#d4a574';
+const PALETTE = ['#d4a574', '#e85d5d', '#e8b84d', '#6ab87a', '#5d9ce8', '#8b6bb5', '#c79a5a', '#a8aeb5'];
+
+let charts = {}; // 追蹤所有 Chart 實例，避免重新整理時殘留
+
+// ============ 載入資料 ============
+async function loadData() {
+  const main = document.getElementById('main');
+
+  // 重置 charts
+  Object.values(charts).forEach(c => c && c.destroy && c.destroy());
+  charts = {};
+
+  main.innerHTML = `
+    <div class="loader">
+      <div>
+        <span class="loader-dot"></span>
+        <span class="loader-dot"></span>
+        <span class="loader-dot"></span>
+      </div>
+      <div style="margin-top: 16px; font-size: 12px; letter-spacing: 2px;">ACCESSING FIELD DATA...</div>
+    </div>
+  `;
+
+  if (ENDPOINT.startsWith('REPLACE')) {
+    main.innerHTML = `<div class="error-box">⚠️ 尚未設定 Apps Script 端點，請編輯 dashboard.html 的 ENDPOINT 變數</div>`;
+    return;
+  }
+
+  try {
+    const res = await fetch(`${ENDPOINT}?action=dashboard&_t=${Date.now()}`);
+    const data = await res.json();
+    document.getElementById('updateTime').textContent =
+      'UPDATED: ' + new Date(data.generated_at).toLocaleString('zh-TW');
+    render(data);
+  } catch (e) {
+    main.innerHTML = `<div class="error-box">載入失敗：${e.message}<br>請確認 Apps Script 已部署且允許「任何人」存取。</div>`;
+  }
+}
+
+// ============ 主渲染 ============
+function render(data) {
+  const main = document.getElementById('main');
+  const s = data.summary;
+
+  main.innerHTML = `
+    <!-- KPI 指標 -->
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">TOTAL CASES</div><div class="kpi-value">${s.total_cases}</div><div class="kpi-delta">累計個案總數</div></div>
+      <div class="kpi danger"><div class="kpi-label">CONFIRMED</div><div class="kpi-value">${s.confirmed}</div><div class="kpi-delta">已確診</div></div>
+      <div class="kpi warn"><div class="kpi-label">SUSPECTED</div><div class="kpi-value">${s.suspected}</div><div class="kpi-delta">疑似個案</div></div>
+      <div class="kpi info"><div class="kpi-label">REPORTING</div><div class="kpi-value">${s.reporting}</div><div class="kpi-delta">通報中</div></div>
+      <div class="kpi ok"><div class="kpi-label">EXCLUDED</div><div class="kpi-value">${s.excluded}</div><div class="kpi-delta">已排除</div></div>
+      <div class="kpi"><div class="kpi-label">CONTACTS</div><div class="kpi-value">${s.total_contacts}</div><div class="kpi-delta">接觸者總數</div></div>
+      <div class="kpi warn"><div class="kpi-label">TRACKING</div><div class="kpi-value">${s.tracking}</div><div class="kpi-delta">追蹤中</div></div>
+      <div class="kpi danger"><div class="kpi-label">→ CASE</div><div class="kpi-value">${s.turned_case}</div><div class="kpi-delta">轉為個案</div></div>
+    </div>
+
+    <!-- Charts -->
+    <div class="chart-grid">
+      <div class="card span-8">
+        <div class="card-title">流行曲線 · Epidemic Curve</div>
+        <div class="card-subtitle">每日新增個案（以發病日為基準）</div>
+        <div class="card-chart"><canvas id="chartTimeline"></canvas></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-title">診斷狀態 · Diagnosis</div>
+        <div class="card-subtitle">個案診斷狀態比例</div>
+        <div class="card-chart"><canvas id="chartDx"></canvas></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-title">追蹤狀態 · Follow-up</div>
+        <div class="card-subtitle">接觸者追蹤狀態</div>
+        <div class="card-chart"><canvas id="chartFollowup"></canvas></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-title">接觸類型 · Contact Types</div>
+        <div class="card-subtitle">接觸者關係分類</div>
+        <div class="card-chart"><canvas id="chartContactType"></canvas></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-title">性別 × 年齡 · Demographics</div>
+        <div class="card-subtitle">個案人口學分佈</div>
+        <div class="card-chart"><canvas id="chartDemo"></canvas></div>
+      </div>
+
+      <div class="card span-8">
+        <div class="card-title">症狀頻率 · Symptom Frequency</div>
+        <div class="card-subtitle">已回報個案中各症狀出現次數</div>
+        <div class="card-chart tall"><canvas id="chartSymptoms"></canvas></div>
+      </div>
+
+      <div class="card span-4">
+        <div class="card-title">身份別 · Role Distribution</div>
+        <div class="card-subtitle">個案身份別分佈</div>
+        <div class="card-chart tall"><canvas id="chartRole"></canvas></div>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-title">單位熱點 TOP 10 · Unit Hotspots</div>
+        <div class="card-subtitle">個案數最多的單位</div>
+        <ul class="rank-list" id="unitRanking"></ul>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-title">寢室/辦公室熱點 · Location Hotspots</div>
+        <div class="card-subtitle">出現 ≥2 例的空間需特別注意</div>
+        <div class="strip">
+          <div class="strip-item">
+            <div class="strip-value" style="color: var(--accent)">寢室</div>
+            <div class="strip-label">DORMITORIES</div>
+          </div>
+        </div>
+        <ul class="rank-list" id="dormRanking" style="margin-bottom: 14px;"></ul>
+        <div class="strip">
+          <div class="strip-item">
+            <div class="strip-value" style="color: var(--info)">辦公室/教室</div>
+            <div class="strip-label">OFFICES</div>
+          </div>
+        </div>
+        <ul class="rank-list" id="officeRanking"></ul>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-title">發病→就醫延遲 · Onset-to-Visit Delay</div>
+        <div class="card-subtitle">從出現症狀到首次就醫的天數分佈</div>
+        <div class="card-chart"><canvas id="chartDelay"></canvas></div>
+      </div>
+
+      <div class="card span-6">
+        <div class="card-title">累計個案 · Cumulative</div>
+        <div class="card-subtitle">個案累積趨勢</div>
+        <div class="card-chart"><canvas id="chartCumulative"></canvas></div>
+      </div>
+
+      <div class="card span-12">
+        <div class="card-title">接觸傳播鏈 · Transmission Network</div>
+        <div class="card-subtitle">個案與接觸者的關聯網絡（點擊節點可拖曳）</div>
+        <div id="network"></div>
+        <div class="network-legend">
+          <div class="legend-item"><span class="legend-dot" style="background:#e85d5d"></span>確診個案</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#e8b84d"></span>疑似個案</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#5d9ce8"></span>通報中</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#6ab87a"></span>排除</div>
+          <div class="legend-item"><span class="legend-dot" style="background:#9aa5b1"></span>接觸者</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  renderCharts(data);
+}
+
+// ============ 繪製圖表 ============
+function renderCharts(data) {
+  const s = data.summary;
+
+  // 1. 時間曲線（每日新增）
+  const timelineLabels = data.timeline.map(t => t.date);
+  const timelineData = data.timeline.map(t => t.count);
+  charts.timeline = new Chart(document.getElementById('chartTimeline'), {
+    type: 'bar',
+    data: {
+      labels: timelineLabels,
+      datasets: [{
+        label: '新增個案',
+        data: timelineData,
+        backgroundColor: ACCENT,
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 } },
+        x: { grid: { display: false } }
+      }
+    }
+  });
+
+  // 2. 診斷狀態（環圖）
+  charts.dx = new Chart(document.getElementById('chartDx'), {
+    type: 'doughnut',
+    data: {
+      labels: ['確診', '疑似', '通報中', '排除', '待定'],
+      datasets: [{
+        data: [s.confirmed, s.suspected, s.reporting, s.excluded, s.pending],
+        backgroundColor: ['#e85d5d', '#e8b84d', '#5d9ce8', '#6ab87a', '#5c6874'],
+        borderColor: '#1a2028',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 8 } } }
+    }
+  });
+
+  // 3. 追蹤狀態
+  charts.followup = new Chart(document.getElementById('chartFollowup'), {
+    type: 'doughnut',
+    data: {
+      labels: ['追蹤中', '已結案', '轉為個案'],
+      datasets: [{
+        data: [s.tracking, s.closed, s.turned_case],
+        backgroundColor: ['#e8b84d', '#6ab87a', '#e85d5d'],
+        borderColor: '#1a2028',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, padding: 8 } } }
+    }
+  });
+
+  // 4. 接觸類型
+  const ctcTypes = Object.keys(data.contact_type_counts);
+  const ctcCounts = Object.values(data.contact_type_counts);
+  charts.contactType = new Chart(document.getElementById('chartContactType'), {
+    type: 'polarArea',
+    data: {
+      labels: ctcTypes,
+      datasets: [{
+        data: ctcCounts,
+        backgroundColor: PALETTE.slice(0, ctcTypes.length).map(c => c + 'cc'),
+        borderColor: '#1a2028',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, padding: 6 } } },
+      scales: { r: { grid: { color: '#2d3842' }, ticks: { display: false } } }
+    }
+  });
+
+  // 5. 性別 × 年齡
+  const ageLabels = Object.keys(data.age_groups);
+  const ageData = Object.values(data.age_groups);
+  charts.demo = new Chart(document.getElementById('chartDemo'), {
+    type: 'bar',
+    data: {
+      labels: ageLabels,
+      datasets: [
+        { label: '個案數', data: ageData, backgroundColor: ACCENT, borderRadius: 4 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        subtitle: {
+          display: true,
+          text: `男 ${data.sex_counts['男性'] || 0} · 女 ${data.sex_counts['女性'] || 0}`,
+          color: '#9aa5b1',
+          font: { size: 11 }
+        }
+      },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+    }
+  });
+
+  // 6. 症狀頻率（橫向長條）
+  const symLabels = data.symptom_ranking.map(r => r.name);
+  const symCounts = data.symptom_ranking.map(r => r.count);
+  charts.symptoms = new Chart(document.getElementById('chartSymptoms'), {
+    type: 'bar',
+    data: {
+      labels: symLabels,
+      datasets: [{ label: '出現次數', data: symCounts, backgroundColor: '#e85d5d', borderRadius: 4 }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } }, y: { grid: { display: false } } }
+    }
+  });
+
+  // 7. 身份別
+  const roleLabels = Object.keys(data.role_counts);
+  const roleData = Object.values(data.role_counts);
+  charts.role = new Chart(document.getElementById('chartRole'), {
+    type: 'bar',
+    data: {
+      labels: roleLabels,
+      datasets: [{ label: '人數', data: roleData, backgroundColor: '#8b6bb5', borderRadius: 4 }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true, ticks: { stepSize: 1 } }, y: { grid: { display: false } } }
+    }
+  });
+
+  // 8. 發病→就醫延遲（直方圖）
+  const delayBins = { '0天': 0, '1-2天': 0, '3-4天': 0, '5-7天': 0, '>7天': 0 };
+  data.onset_to_visit.forEach(d => {
+    if (d === 0) delayBins['0天']++;
+    else if (d <= 2) delayBins['1-2天']++;
+    else if (d <= 4) delayBins['3-4天']++;
+    else if (d <= 7) delayBins['5-7天']++;
+    else delayBins['>7天']++;
+  });
+  charts.delay = new Chart(document.getElementById('chartDelay'), {
+    type: 'bar',
+    data: {
+      labels: Object.keys(delayBins),
+      datasets: [{ label: '人數', data: Object.values(delayBins), backgroundColor: '#5d9ce8', borderRadius: 4 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+    }
+  });
+
+  // 9. 累積個案
+  let cumulative = 0;
+  const cumData = data.timeline.map(t => (cumulative += t.count));
+  charts.cumulative = new Chart(document.getElementById('chartCumulative'), {
+    type: 'line',
+    data: {
+      labels: data.timeline.map(t => t.date),
+      datasets: [{
+        label: '累計個案',
+        data: cumData,
+        borderColor: ACCENT,
+        backgroundColor: ACCENT + '33',
+        tension: 0.25,
+        fill: true,
+        pointRadius: 3,
+        pointBackgroundColor: ACCENT
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false } } }
+    }
+  });
+
+  // 10. 單位熱點排行
+  const unitsRanked = Object.entries(data.unit_counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  renderRankList('unitRanking', unitsRanked.map(([name, count]) => ({ name, count })));
+
+  // 11. 寢室與辦公室熱點
+  renderRankList('dormRanking', data.dorm_ranking.slice(0, 5).map(d => ({ name: d.location, count: d.count })));
+  renderRankList('officeRanking', data.office_ranking.slice(0, 5).map(d => ({ name: d.location, count: d.count })));
+
+  // 12. 接觸網絡圖
+  renderNetwork(data.network);
+}
+
+// ============ 排行榜 ============
+function renderRankList(id, items) {
+  const el = document.getElementById(id);
+  if (!items.length) {
+    el.innerHTML = '<div class="empty">無資料</div>';
+    return;
+  }
+  el.innerHTML = items.map((item, i) => `
+    <li class="rank-item">
+      <div class="rank-num ${i >= 3 ? 'cold' : ''}">${i + 1}</div>
+      <div class="rank-name" title="${item.name}">${item.name}</div>
+      <div class="rank-count">${item.count}</div>
+    </li>
+  `).join('');
+}
+
+// ============ 接觸網絡（vis-network） ============
+function renderNetwork(network) {
+  const container = document.getElementById('network');
+  if (!network.nodes.length) {
+    container.innerHTML = '<div class="empty">尚無接觸資料</div>';
+    return;
+  }
+
+  // 依 group 上色
+  const groupColors = {
+    '確診': '#e85d5d',
+    '疑似': '#e8b84d',
+    '通報中': '#5d9ce8',
+    '排除': '#6ab87a',
+    '尚未就醫': '#c79a5a',
+    '接觸者': '#9aa5b1'
+  };
+
+  const nodes = new vis.DataSet(network.nodes.map(n => ({
+    ...n,
+    color: {
+      background: groupColors[n.group] || '#8b6bb5',
+      border: '#1a2028',
+      highlight: { background: '#d4a574', border: '#f2c78a' }
+    },
+    shape: n.type === 'case' ? 'dot' : 'diamond',
+    size: n.type === 'case' ? 20 : 12,
+    font: { color: '#e8ecef', size: 12, face: '-apple-system' },
+    borderWidth: 2
+  })));
+
+  const edges = new vis.DataSet(network.edges.map(e => ({
+    ...e,
+    color: { color: '#5c6874', highlight: '#d4a574' },
+    arrows: 'to',
+    font: { color: '#9aa5b1', size: 9, strokeWidth: 0, align: 'middle' },
+    smooth: { type: 'continuous' }
+  })));
+
+  new vis.Network(container, { nodes, edges }, {
+    physics: {
+      enabled: true,
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -50,
+        centralGravity: 0.01,
+        springLength: 100
+      },
+      stabilization: { iterations: 200 }
+    },
+    interaction: { hover: true, navigationButtons: true }
+  });
+}
+
+// ============ 啟動 ============
+window.addEventListener('DOMContentLoaded', loadData);
+</script>
+
+</body>
+</html>
