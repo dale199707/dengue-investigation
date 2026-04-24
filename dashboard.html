@@ -496,6 +496,7 @@ function render(data) {
           <div class="legend-item"><span class="legend-dot" style="background:#5d9ce8"></span>通報中</div>
           <div class="legend-item"><span class="legend-dot" style="background:#6ab87a"></span>排除</div>
           <div class="legend-item"><span class="legend-dot" style="background:#9aa5b1"></span>接觸者</div>
+          <div class="legend-item"><span class="legend-dot" style="background:transparent;border:2px solid #f2c78a"></span>雙重身份（個案+接觸者）</div>
         </div>
       </div>
     </div>
@@ -742,20 +743,64 @@ function renderNetwork(network) {
     '接觸者': '#9aa5b1'
   };
 
-  const nodes = new vis.DataSet(network.nodes.map(n => ({
-    ...n,
-    color: {
-      background: groupColors[n.group] || '#8b6bb5',
-      border: '#1a2028',
-      highlight: { background: '#d4a574', border: '#f2c78a' }
-    },
-    shape: n.type === 'case' ? 'dot' : 'diamond',
-    size: n.type === 'case' ? 20 : 12,
-    font: { color: '#e8ecef', size: 12, face: '-apple-system' },
-    borderWidth: 2
-  })));
+  // ============ 實體解析：依姓名合併節點 ============
+  // 策略：若接觸者的姓名 = 某個案的姓名，則接觸者節點 ID 改映射到該個案節點
+  // 優先權：個案節點 > 接觸者節點（個案有更多資訊，是主體）
 
-  const edges = new vis.DataSet(network.edges.map(e => ({
+  // Step 1: 建立「姓名 → 個案節點 ID」的索引
+  const nameToCase = {};
+  network.nodes.forEach(n => {
+    if (n.type === 'case' && n.label) {
+      nameToCase[n.label] = n.id;
+    }
+  });
+
+  // Step 2: 建立「接觸者節點 ID → 目標個案 ID」的映射
+  const idRemap = {};
+  network.nodes.forEach(n => {
+    if (n.type === 'contact' && n.label && nameToCase[n.label]) {
+      idRemap[n.id] = nameToCase[n.label];
+    }
+  });
+
+  // Step 3: 過濾節點（移除已被合併的接觸者）
+  const mergedNodes = network.nodes.filter(n => !idRemap[n.id]);
+
+  // Step 4: 修正邊的 from/to，並標記「雙重身份」
+  const seenEdges = new Set();
+  const mergedEdges = [];
+  network.edges.forEach(e => {
+    const from = idRemap[e.from] || e.from;
+    const to = idRemap[e.to] || e.to;
+    if (from === to) return; // 自我迴圈跳過
+    // 去重同方向同類型的邊
+    const edgeKey = `${from}→${to}|${e.label}`;
+    if (seenEdges.has(edgeKey)) return;
+    seenEdges.add(edgeKey);
+    mergedEdges.push({ ...e, from, to });
+  });
+
+  // Step 5: 標記哪些個案節點同時是別人的接觸者（雙重身份 → 外框加粗變色）
+  const doubleRoleIds = new Set(Object.values(idRemap));
+
+  const nodes = new vis.DataSet(mergedNodes.map(n => {
+    const isDoubleRole = doubleRoleIds.has(n.id);
+    return {
+      ...n,
+      color: {
+        background: groupColors[n.group] || '#8b6bb5',
+        border: isDoubleRole ? '#f2c78a' : '#1a2028',
+        highlight: { background: '#d4a574', border: '#f2c78a' }
+      },
+      shape: n.type === 'case' ? 'dot' : 'diamond',
+      size: n.type === 'case' ? (isDoubleRole ? 24 : 20) : 12,
+      font: { color: '#e8ecef', size: 12, face: '-apple-system' },
+      borderWidth: isDoubleRole ? 4 : 2,
+      title: isDoubleRole ? `${n.label}（個案 + 被列為接觸者）` : n.label
+    };
+  }));
+
+  const edges = new vis.DataSet(mergedEdges.map(e => ({
     ...e,
     color: { color: '#5c6874', highlight: '#d4a574' },
     arrows: 'to',
